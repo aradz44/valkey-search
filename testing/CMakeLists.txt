@@ -29,6 +29,8 @@ set(SRCS_FT_CREATE_PARSER_TEST
 add_executable(ft_create_parser_test ${SRCS_FT_CREATE_PARSER_TEST})
 target_include_directories(ft_create_parser_test
                            PUBLIC ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(ft_create_parser_test PUBLIC valkey_search)
+target_link_libraries(ft_create_parser_test PUBLIC server_events)
 target_link_libraries(ft_create_parser_test PUBLIC index_schema_cc_proto)
 target_link_libraries(ft_create_parser_test PUBLIC ft_create_parser)
 target_link_libraries(ft_create_parser_test PUBLIC index_base)

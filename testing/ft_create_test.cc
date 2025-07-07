@@ -27,6 +27,38 @@ namespace {
 using ::testing::TestParamInfo;
 using ::testing::ValuesIn;
 
+// Helper function to execute FT.CREATE command and handle cleanup
+int ExecuteFTCreateCommand(ValkeyModuleCtx* ctx,
+                           const std::vector<std::string>& argv,
+                           int expected_return = VALKEYMODULE_OK,
+                           const std::string& expected_reply = "+OK\r\n",
+                           bool clear_reply = true) {
+  std::vector<ValkeyModuleString*> cmd_argv;
+  std::transform(argv.begin(), argv.end(), std::back_inserter(cmd_argv),
+                 [&](std::string val) {
+                   return TestValkeyModule_CreateStringPrintf(ctx, "%s",
+                                                              val.data());
+                 });
+
+  int result =
+      vmsdk::CreateCommand<FTCreateCmd>(ctx, cmd_argv.data(), cmd_argv.size());
+  EXPECT_EQ(result, expected_return);
+
+  if (!expected_reply.empty()) {
+    EXPECT_EQ(ctx->reply_capture.GetReply(), expected_reply);
+  }
+
+  if (clear_reply) {
+    ctx->reply_capture.ClearReply();
+  }
+
+  for (auto cmd_arg : cmd_argv) {
+    TestValkeyModule_FreeString(ctx, cmd_arg);
+  }
+
+  return result;
+}
+
 struct ExpectedIndex {
   std::string attribute_alias;
   indexes::IndexerType indexer_type;
@@ -49,17 +81,11 @@ TEST_P(FTCreateTest, FTCreateTests) {
   ON_CALL(*kMockValkeyModule, GetSelectedDb(&fake_ctx_))
       .WillByDefault(testing::Return(db_num));
 
-  std::vector<ValkeyModuleString*> cmd_argv;
-  std::transform(test_case.argv.begin(), test_case.argv.end(),
-                 std::back_inserter(cmd_argv), [&](std::string val) {
-                   return TestValkeyModule_CreateStringPrintf(&fake_ctx_, "%s",
-                                                              val.data());
-                 });
-  EXPECT_EQ(vmsdk::CreateCommand<FTCreateCmd>(&fake_ctx_, cmd_argv.data(),
-                                              cmd_argv.size()),
-            test_case.expected_run_return);
-  EXPECT_EQ(fake_ctx_.reply_capture.GetReply(),
-            test_case.expected_reply_message);
+  // Execute the command with the test case parameters
+  ExecuteFTCreateCommand(&fake_ctx_, test_case.argv,
+                         test_case.expected_run_return,
+                         test_case.expected_reply_message);
+
   auto index_schema = SchemaManager::Instance().GetIndexSchema(
       db_num, test_case.index_schema_name);
   VMSDK_EXPECT_OK(index_schema);
@@ -70,9 +96,6 @@ TEST_P(FTCreateTest, FTCreateTests) {
   }
   VMSDK_EXPECT_OK(SchemaManager::Instance().RemoveIndexSchema(
       db_num, test_case.index_schema_name));
-  for (auto cmd_arg : cmd_argv) {
-    TestValkeyModule_FreeString(&fake_ctx_, cmd_arg);
-  }
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -162,6 +185,153 @@ INSTANTIATE_TEST_SUITE_P(
         },
     }),
     [](const TestParamInfo<FTCreateTestCase>& info) {
+      return info.param.test_name;
+    });
+
+// Test to verify the max-indexes limit
+TEST_F(FTCreateTest, MaxIndexesLimit) {
+  // Set max-indexes to 2 for this test
+  VMSDK_EXPECT_OK(options::GetMaxIndexes().SetValue(2));
+
+  int db_num = 1;
+  ON_CALL(*kMockValkeyModule, GetSelectedDb(&fake_ctx_))
+      .WillByDefault(testing::Return(db_num));
+
+  std::vector<std::string> argv = {"FT.CREATE", "test_index_schema",
+                                   "schema",    "vector",
+                                   "vector",    "Flat",
+                                   "8",         "TYPE",
+                                   "FLOAT32",   "DIM",
+                                   "100",       "DISTANCE_METRIC",
+                                   "IP",        "INITIAL_CAP",
+                                   "15000"};
+
+  // Create 2 indexes succesfully
+  for (int i = 0; i < 2; i++) {
+    // Change index and vector ids
+    argv[1] = absl::StrCat(argv[1], i);
+    argv[3] = absl::StrCat(argv[3], i);
+
+    // Execute command and expect success
+    ExecuteFTCreateCommand(&fake_ctx_, argv);
+  }
+
+  // Try to create a third index
+  argv[1] = absl::StrCat(argv[1], 2);
+  argv[3] = absl::StrCat(argv[3], 2);
+
+  // Execute command with empty expected reply (we'll check it separately)
+  ExecuteFTCreateCommand(&fake_ctx_, argv, VALKEYMODULE_OK,
+                         "$72\r\nMaximum number of indexes reached (2). Cannot "
+                         "create additional indexes.\r\n");
+}
+
+// Struct to hold parameters for max limit tests
+struct MaxLimitTestCase {
+  std::string test_name;
+  std::function<absl::Status(long long)> set_limit_func;
+  std::function<absl::Status(long long)> reset_limit_func;
+  std::vector<std::string> valid_argv;
+  std::vector<std::string> exceed_argv;
+  std::string expected_error_message;
+};
+
+class MaxLimitTest : public ValkeySearchTestWithParam<MaxLimitTestCase> {};
+
+TEST_P(MaxLimitTest, MaxLimitTests) {
+  const MaxLimitTestCase& test_case = GetParam();
+
+  // Set the limit to a small value for this test
+  VMSDK_EXPECT_OK(test_case.set_limit_func(5));
+
+  int db_num = 1;
+  ON_CALL(*kMockValkeyModule, GetSelectedDb(&fake_ctx_))
+      .WillByDefault(testing::Return(db_num));
+
+  // Create an index with valid parameters (within limits)
+  ExecuteFTCreateCommand(&fake_ctx_, test_case.valid_argv);
+
+  // Try to create an index that exceeds the limit
+  ExecuteFTCreateCommand(&fake_ctx_, test_case.exceed_argv, VALKEYMODULE_OK,
+                         test_case.expected_error_message);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MaxLimitTests, MaxLimitTest,
+    ValuesIn<MaxLimitTestCase>({
+        {
+            .test_name = "MaxPrefixesLimit",
+            .set_limit_func =
+                [](long long value) {
+                  return options::GetMaxPrefixes().SetValue(2);
+                },
+            .valid_argv = {"FT.CREATE", "test_index_schema", "PREFIX", "2",
+                           "prefix1", "prefix2", "schema", "vector", "vector",
+                           "Flat", "8", "TYPE", "FLOAT32", "DIM", "100",
+                           "DISTANCE_METRIC", "IP", "INITIAL_CAP", "15000"},
+            .exceed_argv = {"FT.CREATE",
+                            "test_index_schema2",
+                            "PREFIX",
+                            "3",
+                            "prefix1",
+                            "prefix2",
+                            "prefix3",
+                            "schema",
+                            "vector",
+                            "vector",
+                            "Flat",
+                            "8",
+                            "TYPE",
+                            "FLOAT32",
+                            "DIM",
+                            "100",
+                            "DISTANCE_METRIC",
+                            "IP",
+                            "INITIAL_CAP",
+                            "15000"},
+            .expected_error_message = "$54\r\nNumber of prefixes (3) exceeds "
+                                      "the maximum allowed (2)\r\n",
+        },
+        {
+            .test_name = "MaxTagFieldLengthLimit",
+            .set_limit_func =
+                [](long long value) {
+                  return options::GetMaxTagFieldLen().SetValue(5);
+                },
+            .valid_argv = {"FT.CREATE", "test_index_schema", "schema", "vector",
+                           "vector", "Flat", "8", "TYPE", "FLOAT32", "DIM",
+                           "100", "DISTANCE_METRIC", "IP", "INITIAL_CAP",
+                           "15000", "field", "tag", "separator", "|"},
+            .exceed_argv = {"FT.CREATE", "test_index_schema2", "schema",
+                            "vector", "vector", "Flat", "8", "TYPE", "FLOAT32",
+                            "DIM", "100", "DISTANCE_METRIC", "IP",
+                            "INITIAL_CAP", "15000", "field_too_long", "tag",
+                            "separator", "|"},
+            .expected_error_message =
+                "$89\r\nInvalid field type for field `field_too_long`: A tag "
+                "field can have a maximum length of 5\r\n",
+        },
+        {
+            .test_name = "MaxNumericFieldLengthLimit",
+            .set_limit_func =
+                [](long long value) {
+                  return options::GetMaxNumericFieldLen().SetValue(5);
+                },
+            .valid_argv = {"FT.CREATE", "test_index_schema", "schema", "vector",
+                           "vector", "Flat", "8", "TYPE", "FLOAT32", "DIM",
+                           "100", "DISTANCE_METRIC", "IP", "INITIAL_CAP",
+                           "15000", "field", "numeric"},
+            .exceed_argv = {"FT.CREATE", "test_index_schema2", "schema",
+                            "vector", "vector", "Flat", "8", "TYPE", "FLOAT32",
+                            "DIM", "100", "DISTANCE_METRIC", "IP",
+                            "INITIAL_CAP", "15000", "field_too_long",
+                            "numeric"},
+            .expected_error_message =
+                "$93\r\nInvalid field type for field `field_too_long`: A "
+                "numeric field can have a maximum length of 5\r\n",
+        },
+    }),
+    [](const TestParamInfo<MaxLimitTestCase>& info) {
       return info.param.test_name;
     });
 

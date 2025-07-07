@@ -27,6 +27,7 @@
 #include "src/index_schema.pb.h"
 #include "src/indexes/index_base.h"
 #include "src/indexes/vector_base.h"
+#include "src/valkey_search_options.h"
 #include "vmsdk/src/command_parser.h"
 #include "vmsdk/src/status/status_macros.h"
 #include "vmsdk/src/type_conversions.h"
@@ -79,6 +80,13 @@ absl::Status ParsePrefixes(vmsdk::ArgsIterator &itr,
     return absl::InvalidArgumentError(
         absl::StrCat("Bad arguments for PREFIX: `", prefixes_cnt,
                      "` is outside acceptable bounds"));
+  }
+  // Check if the number of prefixes exceeds the configured maximum
+  long long max_prefixes = options::GetMaxPrefixes().GetValue();
+  if (prefixes_cnt > max_prefixes) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Number of prefixes (", prefixes_cnt,
+                     ") exceeds the maximum allowed (", max_prefixes, ")"));
   }
   for (uint32_t i = 0; i < prefixes_cnt; ++i) {
     VMSDK_ASSIGN_OR_RETURN(auto itr_arg, itr.Get());
@@ -196,7 +204,15 @@ absl::Status ParseVector(vmsdk::ArgsIterator &itr,
   return absl::OkStatus();
 }
 absl::Status ParseNumeric(vmsdk::ArgsIterator &itr,
-                          data_model::Index &index_proto) {
+                          data_model::Index &index_proto,
+                          absl::string_view attribute_identifier) {
+  long long max_numeric_identifier_len =
+      options::GetMaxNumericFieldLen().GetValue();
+  if (attribute_identifier.length() > max_numeric_identifier_len) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("A numeric field can have a maximum length of ",
+                     max_numeric_identifier_len));
+  }
   auto numeric_index_proto = std::make_unique<data_model::NumericIndex>();
   index_proto.set_allocated_numeric_index(numeric_index_proto.release());
   return absl::OkStatus();
@@ -210,8 +226,13 @@ vmsdk::KeyValueParser<FTCreateTagParameters> CreateTagParser() {
       GENERATE_FLAG_PARSER(FTCreateTagParameters, case_sensitive));
   return parser;
 }
-absl::Status ParseTag(vmsdk::ArgsIterator &itr,
-                      data_model::Index &index_proto) {
+absl::Status ParseTag(vmsdk::ArgsIterator &itr, data_model::Index &index_proto,
+                      absl::string_view attribute_identifier) {
+  long long max_tag_identifier_len = options::GetMaxTagFieldLen().GetValue();
+  if (attribute_identifier.length() > max_tag_identifier_len) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "A tag field can have a maximum length of ", max_tag_identifier_len));
+  }
   auto tag_index_proto = std::make_unique<data_model::TagIndex>();
   static auto parser = CreateTagParser();
   FTCreateTagParameters parameters;
@@ -258,9 +279,10 @@ absl::StatusOr<data_model::Attribute *> ParseAttributeArgs(
   if (index_type == indexes::IndexerType::kVector) {
     VMSDK_RETURN_IF_ERROR(ParseVector(itr, *index_proto));
   } else if (index_type == indexes::IndexerType::kTag) {
-    VMSDK_RETURN_IF_ERROR(ParseTag(itr, *index_proto));
+    VMSDK_RETURN_IF_ERROR(ParseTag(itr, *index_proto, attribute_identifier));
   } else if (index_type == indexes::IndexerType::kNumeric) {
-    VMSDK_RETURN_IF_ERROR(ParseNumeric(itr, *index_proto));
+    VMSDK_RETURN_IF_ERROR(
+        ParseNumeric(itr, *index_proto, attribute_identifier));
   } else {
     CHECK(false);
   }

@@ -24,6 +24,18 @@ config::Number& GetReaderThreadCount();
 /// number of writer threads
 config::Number& GetWriterThreadCount();
 
+/// Return the maximum number of indexes allowed to create.
+config::Number& GetMaxIndexes();
+
+/// Return the maximum number of prefixes allowed per index.
+config::Number& GetMaxPrefixes();
+
+/// Return the maximum length of a tag field.
+config::Number& GetMaxTagFieldLen();
+
+/// Return the maximum length of a numeric field.
+config::Number& GetMaxNumericFieldLen();
+
 /// Return an immutable reference to the "use-coordinator" flag
 const config::Boolean& GetUseCoordinator();
 

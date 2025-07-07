@@ -34,6 +34,7 @@
 #include "src/index_schema.pb.h"
 #include "src/rdb_section.pb.h"
 #include "src/rdb_serialization.h"
+#include "src/valkey_search_options.h"
 #include "src/vector_externalizer.h"
 #include "vmsdk/src/log.h"
 #include "vmsdk/src/managed_pointers.h"
@@ -168,6 +169,13 @@ absl::Status SchemaManager::CreateIndexSchemaInternal(
 
 absl::Status SchemaManager::CreateIndexSchema(
     ValkeyModuleCtx *ctx, const data_model::IndexSchema &index_schema_proto) {
+  long long max_indexes = options::GetMaxIndexes().GetValue();
+
+  if (SchemaManager::Instance().GetNumberOfIndexSchemas() >= max_indexes) {
+    return absl::OutOfRangeError(
+        absl::StrCat("Maximum number of indexes reached (", max_indexes,
+                     "). Cannot create additional indexes."));
+  }
   if (coordinator_enabled_) {
     CHECK(index_schema_proto.db_num() == 0)
         << "In cluster mode, we only support DB 0";

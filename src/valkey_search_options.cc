@@ -17,12 +17,21 @@ namespace options {
 constexpr uint32_t kHNSWDefaultBlockSize{10240};
 constexpr uint32_t kHNSWMinimumBlockSize{0};
 constexpr uint32_t kMaxThreadsCount{1024};
+constexpr uint32_t kMaxIndexesDefault{10};
+constexpr uint32_t kMaxPrefixesDefault{16};
+constexpr uint32_t kMaxTagFieldLenDefault{10000};
+constexpr uint32_t kMaxNumericFieldLenDefault{256};
 
 constexpr absl::string_view kHNSWBlockSizeConfig{"hnsw-block-size"};
 constexpr absl::string_view kReaderThreadsConfig{"reader-threads"};
 constexpr absl::string_view kWriterThreadsConfig{"writer-threads"};
 constexpr absl::string_view kUseCoordinator{"use-coordinator"};
 constexpr absl::string_view kLogLevel{"log-level"};
+constexpr absl::string_view kMaxIndexesConfig{"max-indexes"};
+constexpr absl::string_view kMaxPrefixesConfig{"max-prefixes"};
+constexpr absl::string_view kMaxTagFieldLenConfig{"max-tag-field-length"};
+constexpr absl::string_view kMaxNumericFieldLenConfig{
+    "max-numeric-field-length"};
 
 static const int64_t kDefaultThreadsCount = vmsdk::GetPhysicalCPUCoresCount();
 
@@ -139,6 +148,42 @@ static auto log_level =
         .WithValidationCallback(ValidateLogLevel)
         .Build();
 
+/// Register the "--max-indexes" flag. Controls the max number of indexes we can
+/// have.
+static auto max_indexes =
+    config::NumberBuilder(kMaxIndexesConfig,   // name
+                          kMaxIndexesDefault,  // default size
+                          1,                   // min size
+                          UINT_MAX)            // max size
+        .Build();
+
+/// Register the "--max-prefixes" flag. Controls the max number of prefixes per
+/// index.
+static auto max_prefixes =
+    config::NumberBuilder(kMaxPrefixesConfig,   // name
+                          kMaxPrefixesDefault,  // default size
+                          1,                    // min size
+                          UINT_MAX)             // max size
+        .Build();
+
+/// Register the "--max-tag-field-length" flag. Controls the max length of a tag
+/// field.
+static auto max_tag_field_len =
+    config::NumberBuilder(kMaxTagFieldLenConfig,   // name
+                          kMaxTagFieldLenDefault,  // default size
+                          1,                       // min size
+                          UINT_MAX)                // max size
+        .Build();
+
+/// Register the "--max-numeric-field-length" flag. Controls the max length of a
+/// numeric field.
+static auto max_numeric_field_len =
+    config::NumberBuilder(kMaxNumericFieldLenConfig,   // name
+                          kMaxNumericFieldLenDefault,  // default size
+                          1,                           // min size
+                          UINT_MAX)                    // max size
+        .Build();
+
 vmsdk::config::Number& GetHNSWBlockSize() {
   return dynamic_cast<vmsdk::config::Number&>(*hnsw_block_size);
 }
@@ -149,6 +194,22 @@ vmsdk::config::Number& GetReaderThreadCount() {
 
 vmsdk::config::Number& GetWriterThreadCount() {
   return dynamic_cast<vmsdk::config::Number&>(*writer_threads_count);
+}
+
+vmsdk::config::Number& GetMaxIndexes() {
+  return dynamic_cast<vmsdk::config::Number&>(*max_indexes);
+}
+
+vmsdk::config::Number& GetMaxPrefixes() {
+  return dynamic_cast<vmsdk::config::Number&>(*max_prefixes);
+}
+
+vmsdk::config::Number& GetMaxTagFieldLen() {
+  return dynamic_cast<vmsdk::config::Number&>(*max_tag_field_len);
+}
+
+vmsdk::config::Number& GetMaxNumericFieldLen() {
+  return dynamic_cast<vmsdk::config::Number&>(*max_numeric_field_len);
 }
 
 const vmsdk::config::Boolean& GetUseCoordinator() {
